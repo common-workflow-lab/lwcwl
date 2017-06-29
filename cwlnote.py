@@ -136,6 +136,9 @@ class Translate(object):
                 else:
                     self.tool["doc"] += c[0][1:] + "\n"
             else:
+                if c[0][0] == "\\":
+                    c[0] = c[0][1:]
+
                 if not comment_block:
                     self.start_tool(c[0])
 

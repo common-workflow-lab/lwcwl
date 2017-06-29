@@ -5,4 +5,4 @@ outfile=output.txt
 
 sort ${reverse boolean? --reverse} ${outfile} > output.txt
 
-Output sort
+Output outfile

@@ -1,6 +1,6 @@
 DockerPull debian:8
 
-# other
+## other
 # This step is renamed from its default to "other"
 rev ${input File} > output.txt
 

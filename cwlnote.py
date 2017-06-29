@@ -36,7 +36,7 @@ class Translate(object):
 
             cont += l
             if l.endswith("\\"):
-                cont += " "
+                cont = cont[:-1]
                 continue
             sp = cont.split(" ")
 
@@ -72,10 +72,11 @@ class Translate(object):
             self.cmds.append(pieces)
             cont = ""
 
-    def start_tool(self, stepid):
+    def start_tool(self, stepvar):
         self.toolin = {}
         self.toolout = ["out"]
-        self.stepid = stepid
+        self.stepvar = stepvar
+        self.stepid = "%s_%i" % (self.stepvar, len(self.steps))
         self.tool = {
             "id": "tool",
             "class": "CommandLineTool",
@@ -101,10 +102,11 @@ class Translate(object):
     def emit(self):
         self.config = {}
         self.binds = {}
+        self.stepid = None
 
         inputs = {}
         outputs = {}
-        steps = []
+        self.steps = []
 
         wf = {}
 
@@ -115,11 +117,43 @@ class Translate(object):
         for c in self.cmds:
             if c[0] in ("DockerPull",):
                 self.config[c[0]] = c[1]
-            elif c[0] in ("Output",):
+            elif c[0] == "Output":
                 outputs[c[1]] = {
                     "type": self.binds[c[1]].pieces[1],
                     "outputSource": self.binds[c[1]].pieces[0]
                 }
+            elif c[0] == "Run":
+                c.pop(0)
+                run = c.pop(0)
+                stepin = {}
+                if not self.stepid:
+                    self.stepid = run
+                while c:
+                    var = c.pop(0)
+                    v, r = var.split("=", 2)
+                    end = None
+                    if r.startswith("${"):
+                        end = "}"
+                    if r.startswith("\""):
+                        end = "\""
+                    while not r.endswith(end):
+                        r += " " + c.pop(0)
+                    if r.startswith("${"):
+                        var = Var(r[2:-1].split(" "))
+                        self.binds[var.pieces[0]] = var
+                        inputs[var.pieces[0]] = var.pieces[1]
+                        stepin[v] = var.pieces[0]
+                    else:
+                        stepin[v] = {"default": json.loads(r)}
+                step = {
+                    "id": self.stepid,
+                    "run": run,
+                    "in": stepin,
+                    "out": []
+                }
+                self.steps.append(step)
+                self.binds[self.stepid] = Var(["%s/%s" % (self.stepid, "out"), "Directory"])
+                self.stepid = None
             elif c[0] == "=":
                 self.tool["outputs"][c[1]] = {
                     "type": "File",
@@ -128,13 +162,14 @@ class Translate(object):
                     }
                 }
                 self.toolout.append(c[1])
-                self.binds[c[1]] = Var(["%s_step/%s" % (self.stepid, c[1]), "File"])
+                self.binds[c[1]] = Var(["%s/%s" % (self.stepid, c[1]), "File"])
             elif c[0][0] == "#":
-                if not comment_block:
-                    self.start_tool(c[0][1:].strip())
-                    comment_block = True
-                else:
+                if comment_block:
                     self.tool["doc"] += c[0][1:] + "\n"
+                else:
+                    if c[0].startswith("##"):
+                        self.start_tool(c[0][2:].strip())
+                        comment_block = True
             else:
                 if c[0][0] == "\\":
                     c[0] = c[0][1:]
@@ -180,19 +215,20 @@ class Translate(object):
                         self.tool["arguments"].append(elm)
 
                 step = {
-                    "id": self.stepid+"_step",
+                    "id": self.stepid,
                     "run": self.tool,
                     "in": self.toolin,
                     "out": self.toolout
                 }
-                steps.append(step)
-                self.binds[self.stepid] = Var(["%s/%s" % (self.stepid+"_step", "out"), "Directory"])
+                self.steps.append(step)
+                self.binds[self.stepvar] = Var(["%s/%s" % (self.stepid, "out"), "Directory"])
                 comment_block = False
+                self.stepid = None
 
         wf = {
             "cwlVersion": "v1.0",
             "class": "Workflow",
-            "steps": steps,
+            "steps": self.steps,
             "inputs": inputs,
             "outputs": outputs
         }

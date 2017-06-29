@@ -1,0 +1,3 @@
+Run echo.cwl msg="hello!"
+## second
+Run echo.cwl msg=${themsg string}

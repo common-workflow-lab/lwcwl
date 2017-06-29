@@ -1,0 +1,8 @@
+DockerPull debian:8
+
+rev ${input File} > output.txt
+outfile=output.txt
+
+sort ${reverse boolean? --reverse} ${outfile} > output.txt
+
+Output sort

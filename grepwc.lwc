@@ -1,0 +1,11 @@
+Memory 2m
+Disk 3m
+Cores 1
+
+Scatter ${file_name File[]}
+grep ${pattern string} ${flags string[]?} ${file_name} > output.txt
+grep=output.txt
+Gather
+
+wc -l ${grep} | tail -1 | cut -d' ' -f 2 > output.txt
+count=$(parseInt(self.contents)) int < output.txt

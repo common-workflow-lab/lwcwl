@@ -12,14 +12,6 @@ class Var(object):
         return "Var%s" % self.pieces
 
 
-class Redirect(object):
-    def __init__(self, pipe, fn):
-        self.pipe = pipe
-        self.fn = fn
-
-    def __repr__(self):
-        return "Redirect%s%s" % (self.pipe, self.fn)
-
 class Translate(object):
     def load(self, fn):
         f = open(fn)
@@ -46,7 +38,6 @@ class Translate(object):
             if pieces:
                 self.cmds.append(pieces)
             cont = ""
-        print self.cmds
         f.close()
 
     def start_tool(self, stepvar):
@@ -89,16 +80,14 @@ class Translate(object):
 
         self.tool = None
 
-        print "---"
-
         for c in self.cmds:
             if c[0] in ("DockerPull",):
                 self.config[c[0]] = c[1]
-            # elif c[0] == "Output":
-            #     outputs[c[1]] = {
-            #         "type": self.binds[c[1]].pieces[1],
-            #         "outputSource": self.binds[c[1]].pieces[0]
-            #     }
+            elif c[0] == "Output":
+                outputs[c[1]] = {
+                    "type": self.binds[c[1]].pieces[1],
+                    "outputSource": self.binds[c[1]].pieces[0]
+                }
             # elif c[0] == "Run":
             #     c.pop(0)
             #     run = c.pop(0)
@@ -159,9 +148,29 @@ class Translate(object):
                     while pieces:
                         p = pieces.pop(0)
                         if p.startswith("${"):
-                            var = scanner.lex(p[2:-1])
-                            print var
-                            val += "$(inputs.%s)" % var[0]
+                            varpieces = scanner.lex(p[2:-1])
+
+                            inpvar = varpieces[0]
+                            if inpvar in self.binds:
+                                var = self.binds[inpvar]
+                            else:
+                                var = Var(varpieces)
+                                self.binds[inpvar] = var
+                                inputs[inpvar] = varpieces[1]
+
+                            self.tool["inputs"][inpvar] = var.pieces[1]
+
+                            if len(varpieces) > 2 and var.pieces[1] in ("boolean", "boolean?"):
+                                self.tool["arguments"].append({
+                                    "prefix": varpieces[2],
+                                    "valueFrom": "$(inputs.%s)" % inpvar
+                                })
+                            elif var.pieces[1] in ("File", "Directory"):
+                                val += "$(inputs.%s.path)" % inpvar
+                            else:
+                                val += "$(inputs.%s)" % inpvar
+
+                            self.toolin[inpvar] = var.pieces[0]
                         elif p[0] == ">":
                             if len(p) == 1:
                                 p = c.pop(0)
@@ -173,29 +182,6 @@ class Translate(object):
                     if val:
                         self.tool["arguments"].append(val)
 
-                    # if isinstance(elm, Var):
-                    #     inpvar = elm.pieces[0]
-                    #     if inpvar in self.binds:
-                    #         var = self.binds[inpvar]
-                    #     else:
-                    #         var = elm
-                    #         self.binds[inpvar] = var
-                    #         inputs[inpvar] = var.pieces[1]
-
-                    #     self.tool["inputs"][inpvar] = var.pieces[1]
-
-                    #     if len(elm.pieces) > 2 and elm.pieces[1] in ("boolean", "boolean?"):
-                    #         self.tool["arguments"].append({
-                    #             "prefix": elm.pieces[2],
-                    #             "valueFrom": "$(inputs.%s)" % inpvar
-                    #         })
-                    #     else:
-                    #         self.tool["arguments"].append("$(inputs.%s)" % inpvar)
-
-                    #     self.toolin[inpvar] = var.pieces[0]
-                    # elif isinstance(elm, Redirect):
-                    #     if elm.pipe == ">":
-                    #         self.tool["stdout"] = elm.fn
                     # if elm[0] == "|":
                     #     self.tool["arguments"].append({"shellQuote": False, "valueFrom": "|"})
                     #     self.tool["arguments"].append(elm[1:])

@@ -3,212 +3,207 @@ import sys
 import json
 
 import scanner
+from parser import L, SW, Any, Gen, EOL
 
-class Var(object):
-    def __init__(self, pieces=None):
-        self.pieces = pieces if pieces else []
+def listify(x, l):
+    if isinstance(x, tuple):
+        listify(x[0], l)
+        listify(x[1], l)
+    elif x is not None and x != "":
+        l.append(x)
+
+class Seq(object):
+    def __init__(self, pat):
+        self.line = []
+        listify(pat, self.line)
+
+class Comment(Seq):
+    def __repr__(self):
+        return "Comment(%s)" % self.line
+
+    def apply(self, target):
+        pass
+
+class Arguments(Seq):
+    def __repr__(self):
+        return "Arguments(%s)" % self.line
+
+class Lit(object):
+    def __init__(self, s):
+        self.s = s
 
     def __repr__(self):
-        return "Var%s" % self.pieces
+        return "Lit(%s)" % self.s
 
+    def apply(self, workflow, step, tool):
+        return self.s
 
-class Translate(object):
-    def load(self, fn):
-        f = open(fn)
-        cont = ""
-        self.cmds = []
+class Ref(object):
+    def __init__(self, s):
+        self.s = s
 
-        for l in f:
-            l = l.strip()
-            if not l:
-                cont = ""
-                continue
+    def __repr__(self):
+        return "Ref(%s)" % self.s
 
-            if l[0] == "#":
-                self.cmds.append([l])
-                cont = ""
-                continue
+    def apply(self, workflow, step, tool):
+        if self.s:
+            if self.s[0] not in workflow.binds:
+                tp = self.s[1] if len(self.s) > 1 else "Any"
+                workflow.wf["inputs"][self.s[0]] = tp
+                workflow.binds[self.s[0]] = (self.s[0], tp)
+            step["in"][self.s[0]] = workflow.binds[self.s[0]][0]
+            tool["inputs"][self.s[0]] = workflow.binds[self.s[0]][1]
+            return "$(inputs.%s)" % self.s[0]
+        else:
+            step["in"]["_inp"] = "%s/out" % workflow.laststep["id"]
+            tool["inputs"]["_inp"] = workflow.laststep["run"]["outputs"]["out"]["type"]
+            return "$(inputs._inp)"
 
-            cont += l
-            if l.endswith("\\"):
-                cont = cont[:-1]
-                continue
+class Arg(object):
+    def __init__(self, pat):
+        self.concat = []
+        for c in scanner.lex(pat, join=False):
+            if c.startswith("${"):
+                self.concat.append(Ref(scanner.lex(c[2:-1])))
+            elif c.startswith("'") and c.endswith("'"):
+                self.concat.append(Lit(c[1:-1]))
+            elif c.startswith('"') and c.endswith('"'):
+                self.concat.append(Lit(c[1:-1]))
+            else:
+                self.concat.append(Lit(c))
 
-            pieces = scanner.lex(cont)
-            if pieces:
-                self.cmds.append(pieces)
-            cont = ""
-        f.close()
+    def __repr__(self):
+        return "Arg(%s)" % self.concat
 
-    def start_tool(self, stepvar):
-        self.toolin = {}
-        self.toolout = ["out"]
-        self.stepvar = stepvar
-        self.stepid = "%s_%i" % (self.stepvar, len(self.steps))
-        self.tool = {
+    def apply(self, workflow, step, tool):
+        tool["arguments"].append(''.join(c.apply(workflow, step, tool) for c in self.concat))
+
+class Command(object):
+    def __init__(self, pat):
+        line = []
+        listify(pat, line)
+        self.args = line[0]
+        self.outputOp = line[1]
+        self.outputs = line[2:]
+
+    def __repr__(self):
+        return "Command(%s, %s, %s)" % (self.args, self.outputOp, self.outputs)
+
+    def apply(self, workflow):
+        tool = {
             "id": "tool",
             "class": "CommandLineTool",
             "inputs": {
             },
+            "outputs": {
+            },
             "requirements": {},
             "hints": {},
             "doc": "",
-            "outputs": {
-                "out": {
-                    "type": "Directory",
-                    "outputBinding": {
-                        "glob": "."
-                    }
-                }
-            },
             "arguments": []
         }
-        if "DockerPull" in self.config:
-            self.tool["hints"]["DockerRequirement"] = {"dockerPull": self.config["DockerPull"]}
 
-
-    def emit(self):
-        self.config = {}
-        self.binds = {}
-        self.stepid = None
-
-        inputs = {}
-        outputs = {}
-        self.steps = []
-
-        wf = {}
-
-        self.tool = None
-
-        for c in self.cmds:
-            if c[0] in ("DockerPull",):
-                self.config[c[0]] = c[1]
-            elif c[0] == "Output":
-                outputs[c[1]] = {
-                    "type": self.binds[c[1]].pieces[1],
-                    "outputSource": self.binds[c[1]].pieces[0]
-                }
-            # elif c[0] == "Run":
-            #     c.pop(0)
-            #     run = c.pop(0)
-            #     stepin = {}
-            #     if not self.stepid:
-            #         self.stepid = run
-            #     while c:
-            #         var = c.pop(0)
-            #         v, r = var.split("=", 2)
-            #         end = None
-            #         if r.startswith("${"):
-            #             end = "}"
-            #         if r.startswith("\""):
-            #             end = "\""
-            #         while not r.endswith(end):
-            #             r += " " + c.pop(0)
-            #         if r.startswith("${"):
-            #             var = Var(r[2:-1].split(" "))
-            #             self.binds[var.pieces[0]] = var
-            #             inputs[var.pieces[0]] = var.pieces[1]
-            #             stepin[v] = var.pieces[0]
-            #         else:
-            #             stepin[v] = {"default": json.loads(r)}
-            #     step = {
-            #         "id": self.stepid,
-            #         "run": run,
-            #         "in": stepin,
-            #         "out": []
-            #     }
-            #     self.steps.append(step)
-            #     self.binds[self.stepid] = Var(["%s/%s" % (self.stepid, "out"), "Directory"])
-            #     self.stepid = None
-            # elif c[0] == "=":
-            #     self.tool["outputs"][c[1]] = {
-            #         "type": "File",
-            #         "outputBinding": {
-            #             "glob": c[2]
-            #         }
-            #     }
-            #     self.toolout.append(c[1])
-            #     self.binds[c[1]] = Var(["%s/%s" % (self.stepid, c[1]), "File"])
-            elif c[0][0] == "#":
-                if c[0].startswith("##"):
-                    self.start_tool(c[0][2:].strip())
-                else:
-                    self.tool["doc"] += c[0][1:] + "\n"
-            else:
-                if c[0][0] == "\\":
-                    c[0] = c[0][1:]
-
-                if self.tool is None or self.tool["arguments"]:
-                    self.start_tool(c[0])
-
-                while c:
-                    elm = c.pop(0)
-                    pieces = scanner.lex(elm, False)
-                    val = ""
-                    while pieces:
-                        p = pieces.pop(0)
-                        if p.startswith("${"):
-                            varpieces = scanner.lex(p[2:-1])
-
-                            inpvar = varpieces[0]
-                            if inpvar in self.binds:
-                                var = self.binds[inpvar]
-                            else:
-                                var = Var(varpieces)
-                                self.binds[inpvar] = var
-                                inputs[inpvar] = varpieces[1]
-
-                            self.tool["inputs"][inpvar] = var.pieces[1]
-
-                            if len(varpieces) > 2 and var.pieces[1] in ("boolean", "boolean?"):
-                                self.tool["arguments"].append({
-                                    "prefix": varpieces[2],
-                                    "valueFrom": "$(inputs.%s)" % inpvar
-                                })
-                            elif var.pieces[1] in ("File", "Directory"):
-                                val += "$(inputs.%s.path)" % inpvar
-                            else:
-                                val += "$(inputs.%s)" % inpvar
-
-                            self.toolin[inpvar] = var.pieces[0]
-                        elif p[0] == ">":
-                            if len(p) == 1:
-                                p = c.pop(0)
-                                self.tool["stdout"] = p
-                            else:
-                                self.tool["stdout"] = p[1:]
-                        else:
-                            val += p
-                    if val:
-                        self.tool["arguments"].append(val)
-
-                    # if elm[0] == "|":
-                    #     self.tool["arguments"].append({"shellQuote": False, "valueFrom": "|"})
-                    #     self.tool["arguments"].append(elm[1:])
-                    #     self.tool["hints"]["ShellCommandRequirement"] = {}
-
-
-                step = {
-                    "id": self.stepid,
-                    "run": self.tool,
-                    "in": self.toolin,
-                    "out": self.toolout
-                }
-                self.steps.append(step)
-                self.binds[self.stepvar] = Var(["%s/%s" % (self.stepid, "out"), "Directory"])
-                comment_block = False
-                self.stepid = None
-
-        wf = {
-            "cwlVersion": "v1.0",
-            "class": "Workflow",
-            "steps": self.steps,
-            "inputs": inputs,
-            "outputs": outputs
+        step = {
+            "in": {},
+            "out": ["out"],
+            "run": tool
         }
 
-        return wf
+        for arg in self.args.line:
+            arg.apply(workflow, step, tool)
 
+        stepname = tool["arguments"][0]
+        step["id"] = stepname
+
+        tool["outputs"]["out"] = {
+            "type": "File",
+            "outputBinding": {
+                "glob": self.outputs[0]
+            }
+        }
+        if self.outputOp == ">":
+            tool["stdout"] = self.outputs[0]
+
+        workflow.binds[stepname] = ("%s/out" % stepname, "File")
+
+        workflow.wf["steps"].append(step)
+        workflow.laststep = step
+
+
+class Require(object):
+    def __init__(self, pat):
+        line = []
+        listify(pat, line)
+        self.req = line[0]
+        self.cls = line[1]
+        self.etc = line[2:]
+
+    def __repr__(self):
+        return "Require(%s, %s, %s)" % (self.req, self.cls, self.etc)
+
+    def apply(self, target):
+        pass
+
+class ForScatter(object):
+    def __init__(self, pat):
+        line = []
+        listify(pat, line)
+        self.var = line[1]
+        self.varset = line[3]
+        self.commands = line[5:-1]
+
+    def __repr__(self):
+        return "For(%s, %s, %s)" % (self.var, self.varset, self.commands)
+
+    def apply(self, target):
+        pass
+
+rest = EOL | (+(Any - EOL) >> EOL)
+comment = Gen(SW("#") >> rest, Comment)
+arguments = Gen(+(Gen(Any - L(">") - L("=>"), Arg)), Arguments)
+command = Gen(arguments >> (L(">") | L("=>")) >> rest, Command)
+require = Gen((L("hint") | L("require")) >> Any >> rest, Require)
+forscatter = Gen(L("for") >> Any >> L("in") >> Any >> L("do") >> EOL >> +(command - L("done")) >> L("done"), ForScatter)
+blank = EOL
+statement = comment | require | forscatter | command | blank
+grammar = +statement
+
+class Workflow(object):
+    def __init__(self):
+        self.binds = {}
+        self.laststep = None
+        self.wf = {
+            "class": "Workflow",
+            "inputs": {},
+            "outputs": {},
+            "steps": []
+        }
+
+    def finish(self):
+        self.wf["outputs"]["out"] = {
+            "type": self.laststep["run"]["outputs"]["out"]["type"],
+            "outputSource": "%s/out" % self.laststep["id"]
+        }
+
+class Translate(object):
+    def load(self, fn):
+        with open(fn) as f:
+            self.pieces = scanner.lex(f.read()+"\n", join=True)
+            #self.cmds = grammar.match(self.pieces)
+            self.cmds = []
+            g, c = grammar.match(self.pieces)
+            if c:
+                print("Failed at", c)
+            else:
+                listify(g, self.cmds)
+
+    def emit(self):
+        workflow = Workflow()
+        for c in self.cmds:
+            c.apply(workflow)
+        workflow.finish()
+        workflow.wf["cwlVersion"] = "v1.0"
+        return workflow.wf
 
 def main(argv):
     t = Translate()

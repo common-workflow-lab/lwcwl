@@ -1,0 +1,2 @@
+#!/usr/bin/env lwcwl
+samtools index ${bam File} => ${bam} + ${bam}.bai

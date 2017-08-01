@@ -1,0 +1,5 @@
+#!/usr/bin/env lwcwl
+hint DockerRequirement {dockerPull: debian:8}
+hint ResourceRequirement {minCores: 2, minRam: 2000}
+rev ${input File} > output.txt
+sort ${reverse boolean? prefix: --reverse} ${} > output.txt

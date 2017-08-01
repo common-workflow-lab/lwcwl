@@ -1,3 +1,0 @@
-DockerPull debian:8
-rev ${input File} | sort ${reverse boolean? --reverse} > output.txt
-Output rev

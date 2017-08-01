@@ -1,0 +1,2 @@
+#!/usr/bin/env lwcwl
+rev ${input File} | sort ${reverse boolean? prefix: --reverse} > output.txt

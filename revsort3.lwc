@@ -1,9 +1,0 @@
-DockerPull debian:8
-
-## other
-# This step is renamed from its default to "other"
-rev ${input File} > output.txt
-
-sort ${reverse boolean? --reverse} ${other/output.txt} > output.txt
-
-Output sort

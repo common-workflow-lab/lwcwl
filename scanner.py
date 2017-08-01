@@ -27,16 +27,14 @@ def scan(scanstr, i=0):  # type: (Text) -> List[int]
                 stack.append(SINGLE_QUOTE)
             elif c == '"':
                 stack.append(DOUBLE_QUOTE)
-            elif c in (' ', "\n"):
+            elif c == "\n":
+                return [start, i+1]
+            elif c == ' ':
                 start += 1
             else:
                 stack.append(RUN)
         elif state == RUN:
-            if c == "'":
-                stack.append(SINGLE_QUOTE)
-            elif c == '"':
-                stack.append(DOUBLE_QUOTE)
-            elif c in (' ', '\\', '$', "\n"):
+            if c in (' ', '\\', "$", "\n", "'", '"'):
                 stack.pop()
                 if stack[-1] == START:
                     return [start, i]
@@ -78,11 +76,13 @@ def scan(scanstr, i=0):  # type: (Text) -> List[int]
         elif state == SINGLE_QUOTE:
             if c == "'":
                 stack.pop()
+                return [start, i + 1]
             elif c == '\\':
                 stack.append(BACKSLASH)
         elif state == DOUBLE_QUOTE:
             if c == '"':
                 stack.pop()
+                return [start, i + 1]
             elif c == '\\':
                 stack.append(BACKSLASH)
         i += 1
@@ -102,10 +102,29 @@ def lex(cont, join=True):
     pieces = []
     n = scan(cont)
     while n:
-        if n[0] > prv or not pieces or not join:
+        if (n[0] > prv or (not pieces) or (not join) or
+            (cont[n[0]:n[1]] == "\n") or (pieces[-1] == "\n")):
             pieces.append(cont[n[0]:n[1]])
         else:
             pieces[-1] = pieces[-1] + cont[n[0]:n[1]]
         prv = n[1]
         n = scan(cont, n[1])
     return pieces
+
+def test():
+    print lex("--in=${foo bar}m", join=True) == ['--in=${foo bar}m']
+    print lex("--in=${foo bar}m", join=False) == ['--in=', '${foo bar}', 'm']
+
+    print lex("-a --in=${foo}m -b' x '", join=True) == ['-a', '--in=${foo}m', "-b' x '"]
+    print lex("-a --in=${foo}m -b' x '", join=False) == ['-a', '--in=', '${foo}', 'm', "-b", "' x '"]
+
+    print lex("a' 'b", join=True) == ["a' 'b"]
+    print lex("a' 'b", join=False) == ["a", "' '", "b"]
+
+    print lex("'a b'", join=True) == ["'a b'"]
+    print lex("'a b'", join=False) == ["'a b'"]
+
+    print lex("foo bar\nbaz blub", join=True) #== []
+
+if __name__ == "__main__":
+    test()

@@ -1,0 +1,5 @@
+#!/usr/bin/env lwcwl
+for cfile in ${sources File[]} do
+  cc -c ${cfile} => $(inputs.cfile.nameroot).o
+done
+cc -o ${exe string} ${} => ${exe}
